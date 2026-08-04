@@ -136,6 +136,11 @@ Three layers:
 Overlapping blocks are laid out in **side-by-side lanes** (`assignLanes`) rather than stacked,
 so a conflict is always visible. The original React prototype explicitly couldn't do this.
 
+Everything surfaces through **one status chip** in the toolbar (`statusTone` picks the
+colour and count; `StatusPanel` is the dropdown body). Conflicts take priority over other
+issues and carry jump-to-booking links. There is deliberately no standing banner — five
+stacked full-width bars is what this replaced.
+
 ---
 
 ## The grid
@@ -220,7 +225,8 @@ read", enforced socially by who knows the passphrase.
 | Free-space math | `freeSegments`, `slotUtilization` |
 | Allocator | `candidatePlacements`, `placementCost`, `solveOnce`, `solveSchedule` |
 | Conflicts | `findRinkConflict`, `findTeamConflict`, `scanConflicts`, `assignLanes` |
-| Validation | `validateSchedule` |
+| Validation | `validateSchedule`, `statusTone`, `StatusPanel` |
+| Dropdowns | `Menu`, `MenuItem`, `ShareIcon` |
 | The grid | `ScheduleGrid`, `gridBounds`, `ROW_H` |
 | Exports | `exportCSV`, `exportICS`, `exportPrintable` |
 | Tabs | `ScheduleTab`, `IceTab`, `FillTab`, `TeamsTab` |

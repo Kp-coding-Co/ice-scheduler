@@ -990,6 +990,69 @@ function Modal({ title, subtitle, onClose, children, width = 520, footer }) {
   );
 }
 
+// A button with a panel hanging off it. Used for the share menu and the
+// status dropdown, so the toolbar can carry a lot without the page
+// growing a stack of banners. `children` is a function so an item can
+// close the menu after acting.
+function Menu({ trigger, width = 250, align = "right", children, panelStyle }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = e => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); window.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const close = () => setOpen(false);
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-flex" }}>
+      {trigger(() => setOpen(o => !o), open)}
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", [align]: 0, width, zIndex: 50,
+          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 9,
+          boxShadow: "0 12px 32px rgba(10,20,35,0.22)", overflow: "hidden",
+          ...panelStyle,
+        }}>
+          {typeof children === "function" ? children(close) : children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The conventional share glyph — a tray with an arrow leaving it. Drawn
+// rather than borrowed from a font, since no Unicode codepoint reads as
+// "share" reliably across platforms.
+function ShareIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      style={{ display: "block" }}>
+      <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+      <path d="M12 15V3" />
+      <path d="M8 7l4-4 4 4" />
+    </svg>
+  );
+}
+
+function MenuItem({ onClick, children, hint }) {
+  return (
+    <button onClick={onClick} style={{
+      display: "block", width: "100%", textAlign: "left", background: "transparent",
+      border: "none", borderBottom: `1px solid ${C.borderLight}`, padding: "9px 12px",
+      fontFamily: FONT, fontSize: 13, color: C.text, cursor: "pointer",
+    }}
+      onMouseEnter={e => e.currentTarget.style.background = C.surfaceAlt}
+      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+      <span style={{ fontWeight: 500 }}>{children}</span>
+      {hint && <span style={{ display: "block", fontSize: 11, color: C.textMuted, marginTop: 2 }}>{hint}</span>}
+    </button>
+  );
+}
+
 function Field({ label, hint, children, style }) {
   return (
     <div style={{ marginBottom: 12, ...style }}>
@@ -1170,7 +1233,7 @@ function ScheduleGrid({
 
   return (
     <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-      <div style={{ overflow: "auto", maxHeight: "76vh" }}>
+      <div style={{ overflow: "auto", maxHeight: "calc(100vh - 210px)" }}>
         <div style={{
           display: "grid",
           gridTemplateColumns: `62px repeat(${columns.length}, minmax(${GRID_COL_MIN}px, 1fr))`,
@@ -1679,52 +1742,52 @@ function IceTimeModal({ assignment, teams, teamMap, rinks, slots, rules, assignm
 // The grid, the conflict banner, and the hand-editing tools.
 // ══════════════════════════════════════════════════
 
-function ConflictBanner({ conflicts, teamMap, rinkMap, onOpen }) {
-  if (!conflicts.length) return null;
-  return (
-    <div style={{ background: C.redLight, border: `1px solid ${C.red}`, borderRadius: 8, padding: "11px 14px", marginBottom: 14, fontSize: 12.5, color: C.redText, lineHeight: 1.6 }}>
-      <strong>⚠ {conflicts.length} double-booked slot{conflicts.length > 1 ? "s" : ""}.</strong>{" "}
-      These came from stored data rather than an edit — new ones can't be saved.{" "}
-      {conflicts.map(([a, b], i) => (
-        <span key={i}>
-          {i > 0 && " · "}
-          <button onClick={() => onOpen(a)} style={{ background: "none", border: "none", padding: 0, color: C.redText, fontWeight: 700, textDecoration: "underline", cursor: "pointer", fontSize: 12.5, fontFamily: FONT }}>
-            {rinkMap[a.rinkId]?.short} {DOW_SHORT[a.day]} {fmtTime(toMin(a.start))}
-          </button>
-        </span>
-      ))}
-    </div>
-  );
+// The one health indicator for the schedule: colour and count in the
+// toolbar, detail on click. Replaces what used to be two separate
+// full-width banners stacked above the grid.
+function statusTone(issues, conflicts) {
+  const errors = issues.filter(i => i.severity === "error").length;
+  const warns = issues.filter(i => i.severity === "warn").length;
+  if (conflicts.length) return { key: "conflict", fg: C.redText, bg: C.redLight, dot: C.red, label: `${conflicts.length} double-booked` };
+  if (errors) return { key: "error", fg: C.redText, bg: C.redLight, dot: C.red, label: `${errors} problem${errors === 1 ? "" : "s"}` };
+  if (warns) return { key: "warn", fg: C.orangeText, bg: C.orangeLight, dot: C.orange, label: `${warns} to review` };
+  return { key: "ok", fg: C.greenText, bg: C.greenLight, dot: C.green, label: "All clear" };
 }
 
-function ValidationPanel({ issues, open, setOpen }) {
-  const errors = issues.filter(i => i.severity === "error");
-  const warns  = issues.filter(i => i.severity === "warn");
-  const worst = errors[0] || warns[0] || issues[0];
-  const tone = errors.length ? { bg: C.redLight, border: C.red, text: C.redText, label: `${errors.length} problem${errors.length === 1 ? "" : "s"}` }
-             : warns.length  ? { bg: C.orangeLight, border: C.orange, text: C.orangeText, label: `${warns.length} to review` }
-             : { bg: C.greenLight, border: C.green, text: C.greenText, label: "All clear" };
+function StatusPanel({ issues, conflicts, teamMap, rinkMap, onOpenAssignment, close }) {
   return (
-    <div style={{ background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 8, marginBottom: 14, overflow: "hidden" }}>
-      <div onClick={() => setOpen(!open)} style={{ padding: "9px 13px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: C.onAccent, background: tone.border, padding: "2px 8px", borderRadius: 4 }}>{tone.label}</span>
-        {!open && worst && <span style={{ fontSize: 12, color: tone.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{worst.message}</span>}
-        <span style={{ marginLeft: "auto", color: tone.text, fontSize: 12 }}>{open ? "▾" : "▸"}</span>
-      </div>
-      {open && (
-        <div style={{ background: C.surface, borderTop: `1px solid ${tone.border}`, padding: "8px 13px", maxHeight: 240, overflowY: "auto" }}>
-          {!issues.length && <div style={{ fontSize: 12, color: C.textMuted, padding: "6px 0" }}>Nothing to report.</div>}
-          {issues.map((iss, i) => {
-            const c = iss.severity === "error" ? C.redText : iss.severity === "warn" ? C.orangeText : C.textMuted;
-            return (
-              <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 0", borderBottom: i < issues.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: c, minWidth: 40, paddingTop: 1 }}>{iss.severity.toUpperCase()}</span>
-                <span style={{ fontSize: 12, color: C.text, lineHeight: 1.45 }}>{iss.message}</span>
-              </div>
-            );
-          })}
+    <div style={{ maxHeight: 340, overflowY: "auto" }}>
+      {!!conflicts.length && (
+        <div style={{ background: C.redLight, padding: "10px 12px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.redText, marginBottom: 6 }}>
+            ⚠ {conflicts.length} double-booked slot{conflicts.length > 1 ? "s" : ""}
+          </div>
+          <div style={{ fontSize: 11, color: C.redText, marginBottom: 7, lineHeight: 1.45 }}>
+            These came from stored data — new ones can't be saved. Click to open one.
+          </div>
+          {conflicts.map(([a], i) => (
+            <button key={i} onClick={() => { onOpenAssignment(a); close(); }} style={{
+              display: "block", background: "none", border: "none", padding: "2px 0",
+              color: C.redText, fontWeight: 700, textDecoration: "underline",
+              cursor: "pointer", fontSize: 12, fontFamily: FONT, textAlign: "left",
+            }}>
+              {rinkMap[a.rinkId]?.short} {DOW_SHORT[a.day]} {fmtTime(toMin(a.start))} — {describeAssignment(a, teamMap)}
+            </button>
+          ))}
         </div>
       )}
+      <div style={{ padding: "6px 12px 8px" }}>
+        {!issues.length && <div style={{ fontSize: 12, color: C.textMuted, padding: "6px 0" }}>Nothing to report.</div>}
+        {issues.map((iss, i) => {
+          const c = iss.severity === "error" ? C.redText : iss.severity === "warn" ? C.orangeText : C.textMuted;
+          return (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 0", borderBottom: i < issues.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: c, minWidth: 36, paddingTop: 2 }}>{iss.severity.toUpperCase()}</span>
+              <span style={{ fontSize: 12, color: C.text, lineHeight: 1.45 }}>{iss.message}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1810,7 +1873,6 @@ function ScheduleTab({
   const [swapError, setSwapError] = useState("");
   const [openAssign, setOpenAssign] = useState(null);
   const [openIceTime, setOpenIceTime] = useState(null);
-  const [panelOpen, setPanelOpen] = useState(false);
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
   const baselineRef = useRef(null);
@@ -1890,43 +1952,112 @@ function ScheduleTab({
   return (
     <div>
       {seedBannerOpen && (
-        <div style={{ background: C.blueLight, border: `1px solid ${C.blue}`, borderRadius: 8, padding: "11px 14px", marginBottom: 14, display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", fontSize: 12.5, color: C.blueText, lineHeight: 1.55 }}>
-          <div style={{ flex: "1 1 300px" }}>
-            <strong>This week was transcribed from the spreadsheet.</strong> The rinks, their windows and the
-            team list should be right. The individual bookings were read off a screenshot and will be wrong in
-            places — please correct anything that's off, then dismiss this.
-          </div>
+        <div style={{ background: C.blueLight, border: `1px solid ${C.blue}`, borderRadius: 8, padding: "7px 12px", marginBottom: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: C.blueText }}>
+          <span style={{ flex: "1 1 320px", lineHeight: 1.45 }}>
+            <strong>Transcribed from the spreadsheet</strong> — rinks and teams should be right, individual
+            bookings were read off a screenshot and need checking.
+          </span>
           <button onClick={onDismissSeedBanner} style={{ ...smallBtn(), borderColor: C.blue, color: C.blueText }}>Got it</button>
         </div>
       )}
 
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontFamily: DISPLAY, fontSize: 15, fontWeight: 700 }}>Weekly schedule</div>
-        <div style={{ fontSize: 12, color: C.textMuted, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <span><strong style={{ color: C.text }}>{stats.count}</strong> ice times</span>
-          <span><strong style={{ color: C.text }}>{stats.pct}%</strong> of {fmtDur(stats.purchased)} used</span>
+      {/* ── One toolbar: view, editing, health, sharing, publishing.
+          Sticky so it stays reachable while the grid scrolls. ── */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 30,
+        background: C.surface, border: `1px solid ${isPublished ? C.blue : C.border}`,
+        borderRadius: 10, padding: "8px 10px", marginBottom: 12,
+        boxShadow: "0 2px 8px rgba(10,20,35,0.07)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          {/* view */}
+          <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: `1px solid ${C.border}` }}>
+            {[["grid", "Grid"], ["teams", "By team"]].map(([v, label]) => (
+              <button key={v} onClick={() => setView(v)} style={{
+                background: view === v ? C.accent : C.surface,
+                color: view === v ? C.onAccent : C.textMuted,
+                border: "none", padding: "6px 11px", fontFamily: FONT, fontSize: 12,
+                fontWeight: view === v ? 600 : 500, cursor: "pointer",
+              }}>{label}</button>
+            ))}
+          </div>
+
+          <span style={{ width: 1, height: 20, background: C.borderLight }} />
+
+          {/* editing */}
+          <button onClick={() => { setSwapMode(m => !m); setSwapPick(null); setSwapError(""); }} disabled={isPublished} style={{
+            ...smallBtn(), opacity: isPublished ? 0.45 : 1,
+            background: swapMode ? C.accent : C.surface, color: swapMode ? C.onAccent : C.text,
+            borderColor: swapMode ? C.accent : C.border, fontWeight: swapMode ? 600 : 500,
+          }}>{swapMode ? "Swapping…" : "Swap"}</button>
+          <button onClick={undo} disabled={!history.length || isPublished} title="Undo"
+            style={{ ...smallBtn(), opacity: (!history.length || isPublished) ? 0.4 : 1 }}>↶</button>
+          <button onClick={redo} disabled={!future.length || isPublished} title="Redo"
+            style={{ ...smallBtn(), opacity: (!future.length || isPublished) ? 0.4 : 1 }}>↷</button>
+          <button onClick={() => commit(baselineRef.current.map(a => ({ ...a })))} disabled={isPublished}
+            style={{ ...smallBtn(), opacity: isPublished ? 0.45 : 1 }}>Reset</button>
+
+          {/* stats, demoted */}
+          <span style={{ marginLeft: "auto", fontSize: 11.5, color: C.textMuted, whiteSpace: "nowrap" }}>
+            {stats.count} ice times · {stats.pct}% of {fmtDur(stats.purchased)}
+          </span>
+
+          {/* health */}
+          <Menu width={340} trigger={(toggle, open) => {
+            const tone = statusTone(issues, conflicts);
+            return (
+              <button onClick={toggle} style={{
+                ...smallBtn(), background: tone.bg, borderColor: tone.dot, color: tone.fg,
+                fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6,
+              }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: tone.dot }} />
+                {tone.label}
+                <span style={{ opacity: 0.7 }}>{open ? "▴" : "▾"}</span>
+              </button>
+            );
+          }}>
+            {close => (
+              <StatusPanel issues={issues} conflicts={conflicts} teamMap={teamMap} rinkMap={rinkMap}
+                onOpenAssignment={a => setOpenIceTime(a)} close={close} />
+            )}
+          </Menu>
+
+          {/* sharing */}
+          <Menu width={260} trigger={(toggle) => (
+            <button onClick={toggle} title="Share this schedule" aria-label="Share this schedule"
+              style={{ ...smallBtn(), padding: "6px 9px", display: "inline-flex", alignItems: "center", color: C.textMuted }}>
+              <ShareIcon />
+            </button>
+          )}>
+            {close => (
+              <div>
+                <div style={{ padding: "8px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 11, fontWeight: 700, color: C.textMuted }}>SHARE</div>
+                <MenuItem onClick={() => { exportPrintable(assignments, { teams, rinks }); close(); }} hint="For the arena office wall">Printable sheet</MenuItem>
+                <MenuItem onClick={() => { exportCSV(assignments, { teams, rinks }); close(); }} hint="For invoicing or the board">CSV</MenuItem>
+                <MenuItem onClick={() => { exportICS(assignments, { teams, rinks }); close(); }} hint={`Repeats weekly through ${SEASON_LABEL} — subscribe once`}>Calendar (.ics)</MenuItem>
+                <div style={{ padding: "8px 12px", fontSize: 11, color: C.textLight, lineHeight: 1.45 }}>
+                  Generated in the browser — nothing is uploaded.
+                </div>
+              </div>
+            )}
+          </Menu>
+
+          <button onClick={onTogglePublish} style={isPublished ? { ...smallBtn(), borderColor: C.blue, color: C.blueText, fontWeight: 600 } : { ...smallBtn(), ...primaryBtn(), padding: "5px 12px", fontSize: 12 }}>
+            {isPublished ? "Published ✓" : "Publish"}
+          </button>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {[["grid", "Grid"], ["teams", "By team"]].map(([v, label]) => (
-            <button key={v} onClick={() => setView(v)} style={{
-              ...smallBtn(),
-              background: view === v ? C.accent : C.surface,
-              color: view === v ? C.onAccent : C.text,
-              borderColor: view === v ? C.accent : C.border,
-              fontWeight: view === v ? 600 : 500,
-            }}>{label}</button>
-          ))}
-        </div>
+
+        {(swapMode || swapError) && (
+          <div style={{ marginTop: 7, paddingTop: 7, borderTop: `1px solid ${C.borderLight}`, fontSize: 12, color: swapError ? C.redText : C.textMuted }}>
+            {swapError || (swapPick ? "Now tap the ice time to swap it with." : "Tap two ice times to trade the teams between them.")}
+          </div>
+        )}
+        {isPublished && !swapMode && !swapError && (
+          <div style={{ marginTop: 7, paddingTop: 7, borderTop: `1px solid ${C.borderLight}`, fontSize: 12, color: C.blueText }}>
+            Coaches are looking at this. Unpublish to make changes.
+          </div>
+        )}
       </div>
-
-      {isPublished && (
-        <div style={{ background: C.blueLight, border: `1px solid ${C.blue}`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: C.blueText }}>
-          <strong>Published.</strong> Coaches are looking at this. Unpublish to make changes.
-        </div>
-      )}
-
-      <ConflictBanner conflicts={conflicts} teamMap={teamMap} rinkMap={rinkMap} onOpen={a => setOpenIceTime(a)} />
-      <ValidationPanel issues={issues} open={panelOpen} setOpen={setPanelOpen} />
 
       {view === "grid" ? (
         <ScheduleGrid
@@ -1938,39 +2069,6 @@ function ScheduleTab({
         <TeamWeekView assignments={assignments} teams={teams} rinkMap={rinkMap}
           onExportTeam={tid => exportICS(assignments, { teams, rinks, teamFilter: tid })} />
       )}
-
-      <SectionCard title="Edit" pad={14}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button onClick={() => { setSwapMode(m => !m); setSwapPick(null); setSwapError(""); }} disabled={isPublished} style={{
-            ...btn(), opacity: isPublished ? 0.5 : 1,
-            background: swapMode ? C.accent : C.surface, color: swapMode ? C.onAccent : C.text,
-            borderColor: swapMode ? C.accent : C.border, fontWeight: swapMode ? 600 : 500,
-          }}>{swapMode ? "Swap mode: on" : "Swap teams"}</button>
-          <button onClick={undo} disabled={!history.length || isPublished} style={{ ...btn(), opacity: (!history.length || isPublished) ? 0.5 : 1 }}>Undo</button>
-          <button onClick={redo} disabled={!future.length || isPublished} style={{ ...btn(), opacity: (!future.length || isPublished) ? 0.5 : 1 }}>Redo</button>
-          <button onClick={() => commit(baselineRef.current.map(a => ({ ...a })))} disabled={isPublished} style={{ ...btn(), opacity: isPublished ? 0.5 : 1 }}>Reset</button>
-          <button onClick={onTogglePublish} style={{ ...(isPublished ? btn() : primaryBtn()), marginLeft: "auto" }}>
-            {isPublished ? "Unpublish" : "Publish to coaches"}
-          </button>
-        </div>
-        {swapMode && !swapError && (
-          <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>
-            {swapPick ? "Now tap the ice time to swap it with." : "Tap two ice times to trade the teams between them."}
-          </div>
-        )}
-        {swapError && <div style={{ marginTop: 10, fontSize: 12, color: C.redText }}>{swapError}</div>}
-      </SectionCard>
-
-      <SectionCard title="Share" subtitle="Generated in the browser — nothing is uploaded." pad={14}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => exportPrintable(assignments, { teams, rinks })} style={btn()}>Printable sheet</button>
-          <button onClick={() => exportCSV(assignments, { teams, rinks })} style={btn()}>CSV</button>
-          <button onClick={() => exportICS(assignments, { teams, rinks })} style={btn()}>Calendar (.ics)</button>
-        </div>
-        <div style={{ fontSize: 11, color: C.textLight, marginTop: 9, lineHeight: 1.5 }}>
-          The calendar file repeats each ice time weekly through {SEASON_LABEL}, so a coach subscribes once.
-        </div>
-      </SectionCard>
 
       {openAssign && (
         <AssignModal slot={openAssign.slot} startAt={openAssign.startAt} teams={teams} teamMap={teamMap}

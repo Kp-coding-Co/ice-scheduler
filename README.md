@@ -12,8 +12,10 @@ Single self-contained HTML file. No build step, no install, no server. Runs on a
 
 - **Schedule** — the grid. Time down the side, rink columns grouped under their day,
   coloured blocks sized by duration, closed hours hatched. Click a block to edit it, click
-  open ice to add a team. Swap two teams, undo/redo, publish to coaches. Also a **By team**
-  view — one row per team, one column per day — which is what a coach opens the link for.
+  open ice to add a team. Everything else lives in one sticky toolbar above it — view
+  switch, swap/undo/redo/reset, a status chip that goes green/amber/red and opens the full
+  issue list, a share menu, and Publish. Also a **By team** view — one row per team, one
+  column per day — which is what a coach opens the link for.
 - **Ice** — the weekly rink windows: which sheet, which day, what hours. Date caveats live
   as notes on the window (`*Oct 13`), the same way they're written on the sheet today.
 - **Fill gaps** — say who still needs ice and it works out where the remaining ice times
