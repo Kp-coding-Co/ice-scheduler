@@ -1,54 +1,59 @@
-# Ice Scheduler — Handoff
+# Wild Ice Scheduler — Handoff
 
-Reference doc for the next coding session on this app. Last updated: 2026-08-04.
+Reference doc for the next coding session. Last updated: 2026-08-04.
 
 ---
 
 ## What this is
 
-Allocates **multiple teams into ice-time openings across multiple rinks**, under
-per-age-group rules. One self-contained HTML file, React + Babel from CDN, no build step,
-four tabs, dark mode, a constraint solver behind one big button.
+A replacement for a minor hockey association's ice-allocation spreadsheet. One
+self-contained HTML file, React + Babel from CDN, no build step, four tabs, dark mode.
 
-The interface started as a clone of a baseball lineup builder (`Kp-coding-Co/lineupbuilder2026`)
-and kept its shape — tab structure, palette, the solver-behind-one-button pattern, the
-warn-don't-block validation panel. It is otherwise a completely separate app: its own repo,
-its own Pages site, its own storage keys, its own database. Nothing here can touch that app's
-data, and nothing there can touch this one's.
-
-The difference from an off-the-shelf rink booking tool (RinkBook and friends) is the
-allocator. Those tools are a shared calendar with conflict detection — you still decide
-who goes where. This one takes "these 12 teams need this much ice, here are the blocks we
-bought, here are the age-group rules" and produces the week.
+The interface began as a clone of a baseball lineup builder
+(`Kp-coding-Co/lineupbuilder2026`) and kept its shape — tab structure, the solver behind one
+button, the warn-don't-block validation panel. It is otherwise a completely separate app:
+own repo, own Pages site, own storage keys, own database. Neither app can reach the other's
+data.
 
 - **File**: `index.html` — the entire app
-- **URL once deployed**: `https://kp-coding-co.github.io/ice-scheduler/`
+- **URL**: <https://kp-coding-co.github.io/ice-scheduler/>
+
+### What it's for
+
+The stated pain: conflicts are only caught manually, and finding one means rejigging the
+week by hand. So the app does two things the spreadsheet can't —
+
+1. **Makes a double-booking impossible to save.** Not a warning; a disabled Save button.
+2. **Re-jigs for you.** The "Fill gaps" tab places what's still needed around what's already
+   there, under the age-group rules.
+
+Commercial tools in this space (RinkBook, Swift, EZFacility, SportsKey) do (1). None do (2),
+and none do "ice requested vs received" — see Open Work.
 
 ---
 
-## Tabs
+## Season model: weekly template, no dates
 
-1. **Ice** — the inventory calendar. Every block of ice the association has purchased,
-   by rink and date. Month grid across the Sep–Mar season, per-day chips with a fill bar
-   showing how much of each block is allocated. Add blocks one at a time, or as a weekly
-   recurring pattern across a date range (the way ice actually gets bought). Blocks can be
-   marked **blocked** — tournament, public skate, maintenance — and the allocator skips them.
-2. **Allocate** — the setup tab. Pick a week, review supply (ice available per day per
-   rink) against demand (per-team session counts, defaulting to each team's weekly target
-   and overridable for this week only), then **Allocate**. Shows what it couldn't place and why.
-3. **Schedule** — the board. Day by day, rink by rink, with open gaps shown inline so
-   you can see what's left. Swap two teams, drop a team into an open gap, nudge a start
-   time, change length or session type, delete. Undo / redo / reset week. Validation panel.
-   Publish/unpublish (gated). Exports: printable sheet, CSV, .ics.
-4. **Teams & Rules** — teams (age group, level, weekly target, home rink, blackout days
-   and dates), rinks, the age-group rule matrix, and the season usage report.
+**The most important structural decision in the app.** The schedule is a repeating
+Monday–Sunday template, matching how ice is actually held and negotiated. There are no
+calendar dates in the data model. `slot.day` and `assignment.day` are `0`–`6` (0 = Sunday).
+
+Date caveats from the source sheet (`*Oct 13`, `*Sept 15`) live as **free text** in
+`slot.note`. They're deliberately not modelled.
+
+The only two dates in the codebase are `SEASON_FIRST_MONDAY` and `SEASON_LAST_DATE`, used
+solely by the `.ics` export to emit `RRULE:FREQ=WEEKLY;UNTIL=…`. A coach subscribes once and
+their calendar tracks the template.
+
+**Known limitation:** a holiday week, bye week or tournament that displaces the pattern can't
+be expressed. The upgrade is additive — keep the template as the planning artifact and let it
+generate dated instances — but don't build it until someone actually asks.
 
 ---
 
 ## Data model
 
-All arrays, all stored under `ice_*` keys in localStorage (and mirrored to Supabase when
-sharing is on).
+All arrays, stored under `ice_*` keys in localStorage (mirrored to Supabase when configured).
 
 ### `rinks` — `ice_rinks`
 ```js
@@ -58,119 +63,129 @@ sharing is on).
 ### `teams` — `ice_teams`
 ```js
 {
-  id, name,
-  ageGroup: "u7" | "u9" | "u11" | "u13" | "u15" | "u18",
-  level: string,               // free text: "A", "B", "House"
-  sessionsPerWeek: number,     // default weekly target
+  id,
+  ageGroup: "u7"|"u9"|"u11"|"u13"|"u15"|"u18"|"senior",
+  level: "Rep"|"AA"|"A"|"BB"|"B"|"HL"|"C",
+  label: string,               // suffix for split squads: "Blue", "White"
+  sessionsPerWeek: number,
   homeRinkId: string | "",     // preference, not a constraint
-  blackoutDows: number[],      // 0 = Sunday
-  blackoutDates: string[],     // "YYYY-MM-DD"
+  blackoutDows: number[],
   notes: string,
 }
 ```
+**There is no `name` field.** A team's name is derived by `teamName(t)` as
+`"<age> <level>"` plus the suffix — `U11 BB`, `U9 HL - Blue`. That's what the block says on
+the sheet, so it's the single source of truth.
 
-### `slots` — `ice_slots` — a block of purchased ice
+### `slots` — `ice_slots` — a weekly rink window
 ```js
-{ id, rinkId, date: "YYYY-MM-DD", start: "HH:MM", end: "HH:MM", note, blocked, blockLabel }
+{ id, rinkId, day: 0-6, start: "HH:MM", end: "HH:MM", note, blocked, blockLabel }
 ```
 
 ### `assignments` — `ice_assignments` — one scheduled ice time
 ```js
-{
-  id, slotId, rinkId, date, start, end,
-  teamIds: string[],           // 1 team, or 2 when the band allows shared ice
-  kind: "practice" | "game" | "skills",
-  shared: boolean,
-}
+{ id, slotId, rinkId, day, start, end, teamIds: string[], kind, shared }
 ```
+`teamIds` holds **two** entries for shared ice. Modelling it as one booking with two teams
+(rather than two bookings) is what keeps "this sheet served two teams" true in every report
+and export.
 
 ### `rules` — `ice_rules` — keyed by age group
 ```js
 {
   durationMin: 60,
-  weekday: { earliest: "17:00", latest: "19:15" },   // earliest/latest START time
+  weekday: { earliest: "17:00", latest: "19:15" },   // earliest/latest START
   weekend: { earliest: "07:00", latest: "19:00" },
-  allowShared: false,
-  maxPerDay: 1,
-  maxPerWeek: 4,
+  allowShared: false,          // cross-ice within the band
+  maxPerDay: 1, maxPerWeek: 4,
 }
 ```
-
-**The window is about when a team may take the ice, not when it must be off.** A U9 team
-with a 6:15p latest start can skate until 7:05p; it just can't be handed a 6:30p slot.
-This is the constraint the whole tool exists to enforce.
+The window governs when a team may **take** the ice, not when it must be off.
 
 ### `meta` — `ice_meta`
 ```js
-{ publishedWeeks: string[], version }   // week starts (Mondays) that have been published
+{ published: bool, seedBanner: bool, version }
 ```
+Bumping `DATA_VERSION` re-seeds a device onto the new shape.
+
+---
+
+## Levels drive the colour
+
+`LEVEL_COLORS` (light and dark variants), keyed by level, is the visual language — the source
+spreadsheet colours by level, not age, because a scheduler scanning the grid asks "did the
+Rep teams get prime ice?". Age rides along as a small grey chip.
+
+`SHARE_LEVELS` (currently `HL`) is the set of levels whose teams may share a sheet **across
+age groups** — that's how a `U13+U18 HL` block works. `canShare(rules, a, b)` returns true if
+both age groups allow cross-ice **or** both teams are the same shareable level.
+
+---
+
+## Conflict enforcement
+
+Three layers:
+
+- `findRinkConflict(assignments, {rinkId, day, start, end}, ignoreId)` — the hard one. Called
+  live from `AssignModal` and `IceTimeModal`; a hit names the booking and disables Save.
+- `findTeamConflict(...)` — same, for a team being in two places. Also gates the swap path in
+  `ScheduleTab.handleBlockClick`.
+- `scanConflicts(assignments)` — whole-schedule sweep for anything that arrived by import or
+  restore. Feeds the banner and the red hatched blocks in the grid.
+
+Overlapping blocks are laid out in **side-by-side lanes** (`assignLanes`) rather than stacked,
+so a conflict is always visible. The original React prototype explicitly couldn't do this.
+
+---
+
+## The grid
+
+`ScheduleGrid` — CSS Grid. Columns are `(day, rink)` pairs that have ice; day headers span
+their rink sub-columns. Rows are **15 minutes** (`STEP`), not 30.
+
+> **Don't change `STEP` to 30.** This association's ice starts at 6:15, 5:15, 3:15, 8:30. A
+> 30-minute grid rounds those to the wrong slot and silently corrupts the schedule.
+
+The visible time range comes from `gridBounds(slots)` — computed from the ice that actually
+exists, so a rink running to 11:15pm is shown rather than clipped.
+
+Phones default to the **By team** view; the grid is a scheduler's tool and needs width.
 
 ---
 
 ## The allocator
 
-`solveSchedule()` in `ice.html`. Greedy with restarts — same family as the lineup app's
-`multiRunSolve`, tuned for a different problem.
+`solveSchedule()` — greedy with restarts, best of 60.
 
-1. Expand the request list: one entry per team per ice time needed.
-2. Order **hardest-first** — the team whose age band has the narrowest start window has
-   the fewest places to go, so it picks first. Ties are broken randomly, which is what
-   makes restarts explore.
-3. For each request, enumerate every legal placement: inside a purchased block, inside the
-   band's start window, long enough to fit, not colliding with the rink or the team, not
-   on a blackout day. Plus **join** placements — sharing an existing ice time of the same
-   length when both bands allow it.
-4. Score each placement and take the cheapest (with jitter). Cost terms, in rough order of
-   weight:
-   - **stranded ice** — a placement that leaves an unusable sliver behind is the most
-     expensive mistake, priced per wasted minute
-   - **fairness** — a team already holding more than its share of prime ice pays to take
-     more; a team stuck with off-peak ice gets a discount on prime
-   - **spacing** — two ice times in one day is heavily penalized, back-to-back days mildly
-   - **window position** — mild bias toward the front of the band's window
-   - **home rink** — a tie-breaker, nothing more
-5. Score the finished week (unplaced requests dominate, then stranded ice, then variance in
-   prime/off-peak holdings, then same-day doubling). Keep the best of 60 runs.
+1. Expand requests: one per team per ice time needed.
+2. Order **hardest-first** — narrowest start window picks first. Ties broken randomly, which
+   is what makes restarts explore.
+3. Enumerate legal placements: inside a window, inside the band's start range, long enough,
+   no rink or team collision, not a blackout. Plus **join** placements for shared ice.
+4. Score and take the cheapest, with jitter. Cost terms by weight: stranded ice (priced per
+   wasted minute), prime/off-peak fairness, same-day and back-to-back spacing, window
+   position, home rink.
+5. Score the week — unplaced dominates, then stranded ice, then variance in prime/off-peak.
 
-Each click passes a fresh random `seed`, so re-running gives a different — but still
-well-scored — arrangement. That's deliberate: "I don't like this week, try again" is a
-real workflow.
+**Additive by default.** `FillTab` passes everything already on the board as `locked`, so a
+run fills gaps without moving existing work. "Start the week over" is an explicit opt-in.
+This framing is deliberate: the allocator is there to answer "I found a conflict and now I
+have to rejig everything", not to write the season.
 
-**Hard vs soft.** The start window, the ice length, rink collisions and team collisions are
-hard — the solver leaves a request unplaced rather than break one, and hand-edits that break
-one show up as `error` in the validation panel. Everything else is a preference.
+Each click passes a fresh random `seed`, so "try again" explores a different arrangement.
 
-Performance: ~1s for 12 teams / 30 requests / a week of ice at 60 runs; ~1.4s for 40 teams
-at 30 runs. All in the browser, no worker.
-
----
-
-## Validation
-
-`validateSchedule()` — warn, don't block, exactly like the lineup app. The only things
-that surface as `error` are genuine conflicts (double-booked rink, double-booked team,
-start outside the age window, an ice time that escaped its purchased block). Everything
-else is `warn` (wrong length for the band, over the daily max, scheduled on a blackout,
-short of the requested count) or `info` (stranded ice, ice still open).
-
-The panel header doubles as the ticker when collapsed, same pattern as the lineup app.
+Performance: ~1s for 18 teams and a week of ice at 60 runs, in the browser, no worker.
 
 ---
 
 ## Persistence
 
-localStorage is always the working store, keyed `ice_rinks`, `ice_teams`, `ice_slots`,
-`ice_assignments`, `ice_rules`, `ice_meta`.
+localStorage is the working store. `SUPABASE_URL`/`SUPABASE_ANON_KEY` are **deliberately
+blank** — the app runs local-only and the header reads *Local only*. This is not a degraded
+state.
 
-**Cloud sharing is optional and not configured.** `SUPABASE_URL` and `SUPABASE_ANON_KEY`
-near the top of `index.html` are deliberately blank, so out of the box everything lives in
-the browser it was entered in and the header badge reads *Local only*. This is not a
-degraded state — it works fine for one scheduler on one machine.
-
-To make the schedule shared, create **your own** Supabase project (do not point this at
-another app's project — the whole reason this repo is separate is that its data should be
-unreachable from anywhere else), paste the project URL and anon key into those two
-constants, and run this once in the SQL editor:
+To share, create a **new** Supabase project (never point this at another app's project),
+paste the URL and anon key into those constants, and run once:
 
 ```sql
 create table if not exists public.ice_data (
@@ -186,10 +201,10 @@ create policy "ice_data_anon_update" on public.ice_data for update to anon using
 insert into public.ice_data (id) values (1) on conflict (id) do nothing;
 ```
 
-The trade-off, once it's on: the anon key is public by design, there's no login, and the
-passphrase gate (`EDIT_PASSPHRASE`, currently `coldsteel`) is client-side only. It guards
-publishing/unpublishing a week and restoring a backup — a speed bump against accidents,
-not security. Anyone with the link can read and write the schedule.
+Once on: the anon key is public by design, there's no login, and `EDIT_PASSPHRASE`
+(`coldsteel`) is client-side only. It gates publishing and restoring a backup — a speed bump
+against accidents, not security. The intended access model is "the scheduler edits, coaches
+read", enforced socially by who knows the passphrase.
 
 ---
 
@@ -197,53 +212,50 @@ not security. Anyone with the link can read and write the schedule.
 
 | Thing | Search for |
 |---|---|
-| Theme palette | `const C_LIGHT`, `const C_DARK`, `function applyTheme` |
-| Age bands and defaults | `const AGE_GROUPS`, `const DEFAULT_RULES` |
-| Prime / off-peak definition | `PRIME_WEEKDAY`, `function slotQuality` |
-| Seed data | `DEFAULT_RINKS`, `DEFAULT_TEAMS`, `SEED_PATTERN`, `buildSeedSlots` |
-| Free-space math | `function freeSegments`, `function slotUtilization` |
-| Allocator | `function candidatePlacements`, `placementCost`, `solveOnce`, `solveSchedule` |
-| Validation | `function validateSchedule` |
+| Palette / theme | `C_LIGHT`, `C_DARK`, `applyTheme` |
+| Level colours | `LEVEL_COLORS_LIGHT`, `levelColor`, `SHARE_LEVELS` |
+| Team naming | `function teamName` |
+| Age rules | `DEFAULT_RULES`, `ruleFor`, `windowFor`, `canShare` |
+| Seed data | `DEFAULT_RINKS`, `T`, `DEFAULT_SLOTS`, `SEED_BOOKINGS` |
+| Free-space math | `freeSegments`, `slotUtilization` |
+| Allocator | `candidatePlacements`, `placementCost`, `solveOnce`, `solveSchedule` |
+| Conflicts | `findRinkConflict`, `findTeamConflict`, `scanConflicts`, `assignLanes` |
+| Validation | `validateSchedule` |
+| The grid | `ScheduleGrid`, `gridBounds`, `ROW_H` |
 | Exports | `exportCSV`, `exportICS`, `exportPrintable` |
-| Ice calendar | `function IceTab`, `SlotEditorModal`, `RecurringIceModal` |
-| Allocate tab | `function AllocateTab` |
-| Board | `function ScheduleTab`, `BoardView`, `RinkColumn`, `TeamWeekView` |
-| Teams / rules / usage | `function TeamsTab`, `RulesEditor`, `UsageReport` |
-| Passphrase gate | `EDIT_PASSPHRASE`, `function EditGate` |
+| Tabs | `ScheduleTab`, `IceTab`, `FillTab`, `TeamsTab` |
+| Passphrase gate | `EDIT_PASSPHRASE`, `EditGate` |
 
 ---
 
-## Design decisions to remember
+## Testing
 
-- **Minutes since midnight** is the internal time unit everywhere. Strings ("HH:MM") are
-  only for storage; `fmtTime` is only for display. Don't mix them.
-- **Dates are parsed at local noon** (`parseDate`) so DST and timezone offsets can never
-  shift a calendar day.
-- **Weeks start Monday** (`weekStartOf`). Associations plan Mon-to-Sun.
-- **Sharing is modelled as two teamIds on one assignment**, not two assignments. That's
-  what makes "this block of ice served two teams" true in every report and export.
-- **A gap shorter than `MIN_USEFUL_BLOCK` (50 min) is stranded ice** — shown greyed on the
-  board, counted in validation, and priced heavily in the solver.
-- **The .ics export uses floating local times** (no TZID). Every ice time is local to the
-  rink, and floating means the calendar app shows exactly what's written.
-- **Tab IDs** (`ice`, `allocate`, `schedule`, `teams`) are stable; labels have already
-  changed once.
+No test runner. The app is driven in headless Chromium via Playwright scripts kept in the
+working scratchpad (not committed): render, open a block, force a conflict and assert Save is
+disabled, add into open ice, swap, fill gaps, all three exports, publish gate, the other tabs,
+dark mode, iPhone viewport.
+
+**CDNs are blocked in the dev sandbox**, so the harness rewrites the CDN `<script>` tags to
+npm-installed copies of the same React/Babel versions before loading. The committed file's
+CDN tags are never modified.
 
 ---
 
 ## Open work
 
-- **Season-level allocation.** Everything is week-at-a-time today. Running a whole season in
-  one pass would let fairness balance across months rather than within a week, but needs a
-  different UI for reviewing the result.
-- **Games vs practices.** `kind` exists on an assignment and shows on the board and in
-  exports, but the allocator treats all requests the same. Games realistically want longer
-  ice, an opponent, and home/away — none of which is modelled.
-- **Goalie / skills sessions across teams.** Currently just another session for one team.
-- **Travel time between rinks.** A team can be given ice at two different arenas on the same
-  day with nothing stopping it (the same-day penalty is the only guard).
-- **Per-team public page.** The per-team .ics covers the subscribe case; a shareable
-  read-only page per team would be the next step.
-- **Audit log.** No record of who changed what. Would need real auth to be worth much.
-- **Usage report date range** defaults to the whole configured season, not the actual data
-  range — fine today, slightly wrong if the season dates move.
+- **The rules are placeholders.** Ice lengths and start windows are guesses. Nothing else
+  matters until they're real — every allocation depends on them.
+- **The seeded bookings are a screenshot reading** and will be wrong in places. The in-app
+  banner says so; clear it once they're corrected.
+- **"Ice received vs requested"** — the association tracks allocated-vs-confirmed on a
+  separate spreadsheet tab. None of the four commercial tools cover it. The most defensible
+  thing on this list, and the natural next build.
+- **No real auth.** The passphrase is shared and client-side. Per-user identity would need a
+  login and would make an audit log meaningful; neither exists.
+- **No audit log.** No record of who changed what.
+- **Games vs practices.** `kind` exists and shows in exports, but the allocator treats all
+  requests alike — games realistically want longer ice, an opponent and home/away.
+- **Travel time between rinks.** Nothing stops a team getting ice at two arenas an hour apart
+  on the same day beyond the same-day penalty.
+- **Rink column order** within a day follows the `rinks` array, not the source sheet's order.
+  Cosmetic, but it's a recognition detail if someone's comparing side by side.
